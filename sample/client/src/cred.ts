@@ -34,7 +34,7 @@ export interface CredentialRecord {
   progress: number
 }
 
-export type Card_status = 'PENDING' | 'PREPARING' | 'PREPARED' | 'ERROR' | 'DISCLOSABLE' | 'DISCLOSING'
+export type Card_status = 'PENDING' | 'PREPARING' | 'PREPARED' | 'ERROR' | 'DISCLOSABLE' | 'DISCLOSING' | 'SHOWPROOF_PENDING'
 
 export type clientUid = string
 
@@ -216,6 +216,7 @@ export class CredentialWithCard extends Credential {
     this._onStatusChangeCallback?.(status)
   }
 
+  // eslint-disable-next-line @typescript-eslint/max-params
   public discloserRequest (url: string, disclosureUid: string, challenge: string, proofSpec: string): void {
     if (this.status !== 'PREPARED') {
       return
@@ -228,10 +229,14 @@ export class CredentialWithCard extends Credential {
     this.status = 'DISCLOSABLE'
   }
 
-  public disclose (url: string, disclosureUid: string, challenge: string, proofSpec: string): void {
-    void verifier.disclose(this, url, disclosureUid, challenge, proofSpec)
-    this.status = 'PREPARED'
-    window.close()
+  // eslint-disable-next-line @typescript-eslint/max-params
+  public disclose (url: string, disclosureUid: string, challenge: string, proofSpec: string, devicePrivateKey?: string): void {
+    this.status = 'SHOWPROOF_PENDING'
+    void verifier.disclose(this, url, disclosureUid, challenge, proofSpec, devicePrivateKey)
+      .then(() => {
+        this.status = 'PREPARED'
+        window.close()
+      })
   }
 
   private getDisclosureProperties (uid: string, proofSpec: string): string[] {

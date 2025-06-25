@@ -17,8 +17,11 @@ use std::fs;
 use ark_std::path::PathBuf;
 use ark_ff::BigInteger;
 use crate::return_error;
+use crate::utils::biguint_to_scalar;
+use crate::utils::bits_to_num;
 use crate::ProofSpec;
 use crate::ProofSpecInternal;
+use sha2::{Digest, Sha256};
 
 // If not set in config.json, the max_cred_len is set to this value. 
 const DEFAULT_MAX_TOKEN_LENGTH : usize = 2048;
@@ -60,7 +63,6 @@ pub fn pem_key_type(key : &str) -> Result<&str, &str> {
 pub fn pem_to_inputs<F>(issuer_pem : &str) -> Result<Vec<F>, Box<dyn std::error::Error>>
     where F: PrimeField 
 {
-    
     let inputs = match pem_key_type(issuer_pem) {
         Ok("RS256") => {
             let issuer_pub = RS256PublicKey::from_pem(issuer_pem).unwrap();
@@ -88,8 +90,36 @@ pub fn pem_to_inputs<F>(issuer_pem : &str) -> Result<Vec<F>, Box<dyn std::error:
     };
 
     Ok(inputs)
-
 }
+
+// Take the issuer's public key in PEM input format, return a hash of the public key
+pub fn pem_to_pubkey_hash<F>(issuer_pem : &str) -> Result<F, Box<dyn std::error::Error>>
+    where F: PrimeField 
+{
+    let inputs = match pem_key_type(issuer_pem) {
+        Ok("RS256") => {
+            let _issuer_pub = RS256PublicKey::from_pem(issuer_pem).unwrap();
+            todo!(); // Currently unsupported -- the RSA circuit expects the issuer public key as integer limbs
+        }
+        Ok("ES256") =>  {
+            let issuer_pub = ES256PublicKey::from_pem(issuer_pem).unwrap();
+            let issuer_key_bytes = issuer_pub.public_key().to_bytes_uncompressed();
+            let mut digest = Sha256::digest(&issuer_key_bytes[1..]).to_vec();    // skip hashing the first byte
+            digest = digest[0..digest.len()-1].to_vec();    // truncate digest to 248 bits
+            let pubkey_hash = bits_to_num(&digest);
+            biguint_to_scalar(&pubkey_hash)
+        }
+        Err(e) =>  {
+            return Err(e.into());
+        }
+        _ => {
+            return Err("unknown error".into())
+        }
+    };
+
+    Ok(inputs)
+}
+
 
 type JsonMap = serde_json::Map<String, Value>;
 
@@ -146,7 +176,7 @@ Result<(JsonMap, JsonMap, JsonMap), Box<dyn Error>>
         padded_m.push(0);
     }
   
-    // Begin creating prover's output. Everthing must have string type for Circom
+    // Begin creating prover's output. Everything must have string type for Circom
     let mut prover_inputs_json = serde_json::Map::new();
     let mut public_ios_json = serde_json::Map::new();
     let mut prover_aux_json = serde_json::Map::new();
@@ -585,6 +615,21 @@ pub(crate) fn create_proof_spec_internal(proof_spec: &ProofSpec, config_str: &st
     let config = parse_config(config_str)?;
     let mut revealed = vec![];
     let mut hashed = vec![];
+    // Build claim_types map
+    let mut claim_types = std::collections::BTreeMap::new();
+    for (key, value) in config.iter() {
+        // Only process claim entries, skip config keys
+        if crate::prep_inputs::CRESCENT_CONFIG_KEYS.contains(key.as_str()) {
+            continue;
+        }
+        if let Some(obj) = value.as_object() {
+            if let Some(type_str) = obj.get("type").and_then(|v| v.as_str()) {
+                claim_types.insert(key.clone(), type_str.to_string());
+            }
+        }
+    }
+
+    // Check that all revealed attributes are in the config
     for attr in &proof_spec.revealed {
         let config_entry = config.get(attr.as_str()).ok_or(format!("Attribute {} not found in config", attr))?;
         if config_entry.get("reveal_digest").is_some() && config_entry.get("reveal_digest").ok_or("Expected boolean value for 'reveal_digest'")?.as_bool().unwrap() {
@@ -606,5 +651,13 @@ pub(crate) fn create_proof_spec_internal(proof_spec: &ProofSpec, config_str: &st
         return_error!("Proof spec indicates the credential is device bound, but is missing the presentation message");
     }
 
-    Ok(ProofSpecInternal {revealed, hashed, range_over_year, presentation_message, device_bound, config_str: config_str.to_owned()})
+    Ok(ProofSpecInternal {
+        revealed,
+        hashed,
+        range_over_year,
+        presentation_message,
+        device_bound,
+        config_str: config_str.to_owned(),
+        claim_types,
+    })
 }
