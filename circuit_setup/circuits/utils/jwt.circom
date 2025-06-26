@@ -4,6 +4,7 @@ include "./sha.circom";
 include "./rsa.circom";
 include "./base64.circom";
 include "../circomlib/circuits/bitify.circom";
+include "../functions.circom";
 
 template JWTVerifyWithSuppliedDigest(max_msg_bytes, max_json_bytes, n, k) {
     signal input message[max_msg_bytes]; // header + . + payload
